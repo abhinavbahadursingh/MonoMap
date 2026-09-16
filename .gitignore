@@ -1,0 +1,70 @@
+# ============================================================
+# videoSparse — root gitignore (Python backend + Next.js frontend)
+# A frontend/.gitignore also exists; this file covers the whole repo.
+# ============================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+eggs/
+.venv/
+venv/
+ENV/
+env/
+.Python
+pip-log.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+*.cover
+
+# ---------- Node / Next.js ----------
+node_modules/
+.next/
+out/
+.next-env.d.ts
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm/
+.yarn/
+tsconfig.tsbuildinfo
+
+# ---------- SLAM artifacts & media (large / regenerable) ----------
+# Per-run pipeline outputs (normalized video, .npz maps, plots, previews)
+backend/output/
+# Raw / sample videos are large binaries — keep them out of git
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+# Numpy artifacts are regenerated on every run
+*.npz
+# Benchmark snapshots are local-only
+backend/output/bench_*.json
+bench_*.json
+
+# ---------- Environments & secrets ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+frontend/.env.local
+
+# ---------- OS / editors ----------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

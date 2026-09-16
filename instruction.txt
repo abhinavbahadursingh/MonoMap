@@ -1,0 +1,1 @@
+make the complete code readable and do not do any Temporary fixes or patch work try finding the root cause and fix it thorugh the complete development of this project 

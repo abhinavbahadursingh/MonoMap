@@ -1,0 +1,7 @@
+opencv-python>=4.8
+numpy>=1.24
+scipy>=1.11
+open3d>=0.18  # visualization only (visualize_3d.py); core SLAM needs no GUI
+fastapi>=0.110  # API only (main.py app)
+uvicorn>=0.29  # API server only
+python-multipart>=0.0.9  # API file uploads only
