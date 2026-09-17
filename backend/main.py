@@ -327,6 +327,15 @@ def _cors_origins() -> List[str]:
         "http://127.0.0.1:3000",
         "https://monomapp.onrender.com",
     ]
+    # Extra origins via env (comma-separated), e.g.
+    # FRONTEND_URL=https://my-app.vercel.app
+    extra: List[str] = []
+    for var in ("FRONTEND_URL", "CORS_ORIGINS"):
+        raw = os.environ.get(var, "").strip()
+        if raw:
+            extra.extend(
+                o.strip().rstrip("/") for o in raw.split(",") if o.strip()
+            )
     # De-dup while preserving order.
     seen = set(origins)
     for origin in extra:
