@@ -6,7 +6,7 @@ import DashboardMetrics from "../components/DashboardMetrics";
 import FeatureTrackingPanel from "../components/FeatureTrackingPanel";
 import PhaseParameters from "../components/PhaseParameters";
 import VideoUpload from "../components/VideoUpload";
-import { uploadVideo, type Phase, type SlamResult } from "../lib/api";
+import { fetchSampleVideo, uploadVideo, type Phase, type SlamResult } from "../lib/api";
 
 // three.js touches WebGL: client-only, never SSR.
 const PointCloudViewerDynamic = dynamic(() => import("../components/PointCloudViewer"), {
@@ -70,6 +70,7 @@ export default function Page() {
   const [progress, setProgress] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<SlamResult | null>(null);
+  const [sampleLoading, setSampleLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(0);
   const viewsRef = useRef<HTMLDivElement | null>(null);
@@ -148,6 +149,22 @@ export default function Page() {
     }
   }, [file, busy]);
 
+  const handleUseSample = useCallback(async () => {
+    if (busy || sampleLoading) return;
+    setSampleLoading(true);
+    setMessage("");
+    try {
+      const sample = await fetchSampleVideo();
+      handleSelect(sample);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Could not load sample video.",
+      );
+    } finally {
+      setSampleLoading(false);
+    }
+  }, [busy, sampleLoading, handleSelect]);
+
   return (
     <main className="page">
       <header className="hero">
@@ -159,7 +176,7 @@ export default function Page() {
       {/* TOP — live backend metrics dashboard */}
       <DashboardMetrics result={result} phase={phase} liveElapsed={elapsed} />
 
-      {/* WORKFLOW — input video + tracking summary + 2D tracking, side by side */}
+      {/* WORKFLOW — input video + 2D tracking, side by side */}
       <div className="aside-grid">
         <VideoUpload
           file={file}
@@ -172,67 +189,71 @@ export default function Page() {
           message={message}
           onSelect={handleSelect}
           onRun={handleRun}
+          onUseSample={handleUseSample}
+          sampleLoading={sampleLoading}
         />
-        <section className="card" aria-label="Tracking and map summary">
-          <div className="metrics-head">
-            <h2>Tracking &amp; Map Summary</h2>
-            <span
-              className={
-                "pill " +
-                (result?.tracking_status === "ACTIVE"
-                  ? "pill-done"
-                  : result
-                    ? "pill-warn"
-                    : busy
-                      ? "pill-busy"
-                      : "pill-idle")
-              }
-            >
-              <span className="pill-dot" />
-              {result ? result.tracking_status : busy ? "WORKING" : "STANDBY"}
-            </span>
-          </div>
-          {result ? (
-            <div className="summary-list">
-              <div className="summary-row">
-                <span className="muted">Mean features / frame</span>
-                <strong>{result.tracked_features.toLocaleString()}</strong>
-              </div>
-              <div className="summary-row">
-                <span className="muted">ORB range</span>
-                <span>
-                  {result.orb_stats.min} / {result.orb_stats.mean} / {result.orb_stats.max}
-                </span>
-              </div>
-              <div className="summary-row">
-                <span className="muted">Reliable frames</span>
-                <span>
-                  {result.orb_stats.reliable_frames}/{result.orb_stats.total_frames}
-                </span>
-              </div>
-              <div className="summary-row">
-                <span className="muted">Mean good matches / pair</span>
-                <span>{Number(result.match_stats.mean).toFixed(1)}</span>
-              </div>
-              <div className="summary-row">
-                <span className="muted">Realtime factor</span>
-                <span>×{result.realtime_factor.toFixed(2)}</span>
-              </div>
-              <div className="summary-row">
-                <span className="muted">Video duration</span>
-                <span>{result.video_duration_sec.toFixed(2)} s</span>
-              </div>
-            </div>
-          ) : (
-            <p className="muted">
-              {busy
-                ? "Computing ORB features, matches and poses — real numbers land here when SLAM finishes."
-                : "Run SLAM to populate tracking statistics from the backend."}
-            </p>
-          )}
-        </section>
         <FeatureTrackingPanel previewUrl={previewUrl} result={result} phase={phase} />
       </div>
+
+      {/* TRACKING & MAP SUMMARY — full-width strip below the input panel */}
+      <section className="card summary-strip-card" aria-label="Tracking and map summary">
+        <div className="metrics-head">
+          <h2>Tracking &amp; Map Summary</h2>
+          <span
+            className={
+              "pill " +
+              (result?.tracking_status === "ACTIVE"
+                ? "pill-done"
+                : result
+                  ? "pill-warn"
+                  : busy
+                    ? "pill-busy"
+                    : "pill-idle")
+            }
+          >
+            <span className="pill-dot" />
+            {result ? result.tracking_status : busy ? "WORKING" : "STANDBY"}
+          </span>
+        </div>
+        {result ? (
+          <div className="summary-strip">
+            <div className="summary-cell">
+              <span className="muted">Mean features / frame</span>
+              <strong>{result.tracked_features.toLocaleString()}</strong>
+            </div>
+            <div className="summary-cell">
+              <span className="muted">ORB range</span>
+              <strong>
+                {result.orb_stats.min} / {result.orb_stats.mean} / {result.orb_stats.max}
+              </strong>
+            </div>
+            <div className="summary-cell">
+              <span className="muted">Reliable frames</span>
+              <strong>
+                {result.orb_stats.reliable_frames}/{result.orb_stats.total_frames}
+              </strong>
+            </div>
+            <div className="summary-cell">
+              <span className="muted">Mean good matches / pair</span>
+              <strong>{Number(result.match_stats.mean).toFixed(1)}</strong>
+            </div>
+            <div className="summary-cell">
+              <span className="muted">Realtime factor</span>
+              <strong>×{result.realtime_factor.toFixed(2)}</strong>
+            </div>
+            <div className="summary-cell">
+              <span className="muted">Video duration</span>
+              <strong>{result.video_duration_sec.toFixed(2)} s</strong>
+            </div>
+          </div>
+        ) : (
+          <p className="muted">
+            {busy
+              ? "Computing ORB features, matches and poses — real numbers land here when SLAM finishes."
+              : "Run SLAM to populate tracking statistics from the backend."}
+          </p>
+        )}
+      </section>
 
       {/* ALL PHASES — live parameters + terminal output from the pipeline */}
       <div className="phase-section">

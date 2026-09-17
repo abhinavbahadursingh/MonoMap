@@ -641,10 +641,10 @@ header p {
   margin-top: 16px;
 }
 
-/* Three workflow panels side by side: Input Video | Summary | 2D Tracking. */
+/* Two workflow panels side by side: Input Video | 2D Tracking. */
 .aside-grid {
   display: grid;
-  grid-template-columns: 1.05fr 1fr 1.25fr;
+  grid-template-columns: 1fr 1.25fr;
   gap: 16px;
   align-items: start;
   margin-top: 16px;
@@ -809,10 +809,55 @@ header p {
   border-bottom: none;
 }
 
+/* Full-width Tracking & Map Summary strip below the input panel. */
+.summary-strip-card {
+  margin-top: 16px;
+}
+
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.summary-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(125, 145, 255, 0.05);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-cell .muted {
+  font-size: 12px;
+}
+
+.summary-cell strong {
+  font-size: 18px;
+  font-weight: 700;
+}
+
 .btn-run {
   margin-top: 12px;
   width: 100%;
   padding: 13px 22px;
+}
+
+.btn-sample {
+  margin-top: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text);
+  box-shadow: none;
+  font-weight: 600;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .done-dot {

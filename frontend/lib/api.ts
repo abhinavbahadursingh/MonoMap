@@ -93,8 +93,10 @@ export const PHASE_LABELS: Record<string, string> = {
   optimization: "Pose optimization",
 };
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+/** Backend base URL (no trailing slash). Set via NEXT_PUBLIC_API_URL in prod. */
+export const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
+).replace(/\/+$/, "");
 
 /** Human-readable labels for the 11 canonical pipeline phases. */
 export const STAGE_LABELS: Record<string, string> = {
@@ -156,6 +158,42 @@ export async function fetchPhases(): Promise<PhaseInfo[] | null> {
   } catch {
     return null;
   }
+}
+
+/** Default testing video served by the backend (backend/video1.mp4). */
+export const SAMPLE_VIDEO_FILENAME = "video1.mp4";
+
+export interface SampleVideoInfo {
+  available: boolean;
+  filename: string;
+  size_bytes: number;
+  detail?: string;
+}
+
+export async function fetchSampleInfo(): Promise<SampleVideoInfo | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/sample-video/info`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as SampleVideoInfo;
+  } catch {
+    return null;
+  }
+}
+
+/** Download the backend's default testing video as a File (for preview + Run SLAM). */
+export async function fetchSampleVideo(): Promise<File> {
+  const res = await fetch(`${API_BASE}/api/sample-video`, { cache: "no-store" });
+  if (res.status === 404) {
+    throw new Error(
+      "Default testing video (video1.mp4) is not available on the server.",
+    );
+  }
+  if (!res.ok) throw new Error(`Sample video request failed (${res.status})`);
+  const blob = await res.blob();
+  if (!blob.size) throw new Error("Sample video download was empty.");
+  return new File([blob], SAMPLE_VIDEO_FILENAME, { type: "video/mp4" });
 }
 
 /**

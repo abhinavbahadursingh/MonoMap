@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  SAMPLE_VIDEO_FILENAME,
   STAGE_ORDER,
   fetchProgress,
   stageLabel,
@@ -21,6 +22,8 @@ interface Props {
   message: string;
   onSelect: (file: File | null) => void;
   onRun: () => void;
+  onUseSample: () => void;
+  sampleLoading: boolean;
 }
 
 interface VideoMeta {
@@ -48,6 +51,8 @@ export default function VideoUpload({
   message,
   onSelect,
   onRun,
+  onUseSample,
+  sampleLoading,
 }: Props) {
   const pick = (picked: File | null) => {
     if (picked && !picked.name.toLowerCase().endsWith(".mp4")) {
@@ -148,6 +153,17 @@ export default function VideoUpload({
               onChange={(e) => pick(e.target.files?.[0] ?? null)}
             />
           </label>
+          <button
+            className="btn btn-sample"
+            type="button"
+            disabled={busy || sampleLoading}
+            onClick={onUseSample}
+            title={`Load ${SAMPLE_VIDEO_FILENAME} from the backend as the input`}
+          >
+            {sampleLoading
+              ? "Loading sample…"
+              : `Use default testing video (${SAMPLE_VIDEO_FILENAME})`}
+          </button>
           {previewUrl && (
             <video
               ref={videoRef}

@@ -32,6 +32,7 @@ TARGET_HEIGHT = 360
 import argparse
 import contextlib
 import io
+import os
 import shutil
 import sys
 import tempfile
@@ -40,6 +41,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Any, Dict, List, Optional
 # `src/` is not an installed package, so its parent goes on the import path.
 # (Deliberate: avoids requiring `pip install -e .` before first run.)
@@ -310,18 +312,94 @@ app = FastAPI(title="videoSparse SLAM API",
               description="Monocular visual-odometry SLAM over uploaded video.",
               version="1.0.0")
 
-# Frontend origin (local dev). Tighten before any non-local deployment.
+
+def _cors_origins() -> List[str]:
+    """Allowed frontend origins (env-driven for deployment).
+
+    FRONTEND_URL / CORS_ORIGINS extend the local-dev defaults so the
+    deployed frontend can call the API from another domain. Comma-separated
+    values supported, e.g.:
+        FRONTEND_URL=https://my-app.vercel.app
+        CORS_ORIGINS=https://my-app.vercel.app,https://my-app.onrender.com
+    """
+    origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://monomapp.onrender.com",
+    ]
+    # De-dup while preserving order.
+    seen = set(origins)
+    for origin in extra:
+        if origin not in seen:
+            origins.append(origin)
+            seen.add(origin)
+    return origins
+
+
+# Frontend origin(s): local dev by default, extended via
+# FRONTEND_URL / CORS_ORIGINS env vars in production.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_methods=["POST", "GET"],
+    allow_origins=_cors_origins(),
+    allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+def root() -> Dict[str, Any]:
+    """Root probe for PaaS health checks / human curl (docs live at /docs)."""
+    return {"status": "ok", "service": "videoSparse SLAM API",
+            "docs": "/docs", "health": "/health"}
 
 
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+# ------------------------------------------------------------------ #
+# Default testing video (backend/video1.mp4, git-ignored large binary).
+#
+# GET /api/sample-video/info -> availability + size without downloading.
+# GET /api/sample-video      -> streams the file as video/mp4.
+# Override the path with SAMPLE_VIDEO_PATH env var on hosts where the
+# file lives elsewhere. 404 when absent (e.g. fresh deploy without the
+# sample uploaded) — the frontend surfaces that message instead of hanging.
+# ------------------------------------------------------------------ #
+
+SAMPLE_VIDEO_FILENAME = "video1.mp4"
+
+
+def _sample_video_path() -> Path:
+    override = os.environ.get("SAMPLE_VIDEO_PATH", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent / SAMPLE_VIDEO_FILENAME
+
+
+@app.get("/api/sample-video/info")
+def sample_video_info() -> Dict[str, Any]:
+    path = _sample_video_path()
+    if path.is_file() and path.stat().st_size > 0:
+        return {"available": True, "filename": SAMPLE_VIDEO_FILENAME,
+                "size_bytes": path.stat().st_size}
+    return {"available": False, "filename": SAMPLE_VIDEO_FILENAME,
+            "size_bytes": 0,
+            "detail": "Sample video not available on the server. "
+                      "Upload video1.mp4 next to backend/main.py "
+                      "(or set SAMPLE_VIDEO_PATH), then retry."}
+
+
+@app.get("/api/sample-video")
+def sample_video():
+    path = _sample_video_path()
+    if not path.is_file() or path.stat().st_size == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Sample video (video1.mp4) not available on the server.")
+    return FileResponse(str(path), media_type="video/mp4",
+                        filename=SAMPLE_VIDEO_FILENAME)
 
 
 @app.get("/api/slam/progress")

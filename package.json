@@ -1,0 +1,16 @@
+{
+  "name": "videosparse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monocular RGB Sparse Point-Cloud SLAM — FastAPI backend + Next.js frontend",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c green,cyan npm:dev:backend npm:dev:frontend",
+    "dev:backend": "python -m uvicorn main:app --reload --port 8000 --app-dir backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "install:frontend": "npm --prefix frontend install",
+    "build": "npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
