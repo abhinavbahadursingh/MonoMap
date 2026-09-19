@@ -75,6 +75,7 @@ export default function Page() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(0);
   const busy = phase === "uploading" || phase === "processing";
+  const slamViewsRef = useRef<HTMLDivElement | null>(null);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -162,6 +163,17 @@ export default function Page() {
       setTimeout(() => setSampleProgress(null), 800);
     }
   }, [busy, sampleLoading, handleSelect]);
+
+  // Auto-scroll to the 3D results when processing completes — center on screen
+  useEffect(() => {
+    if (phase === "done" && result && slamViewsRef.current) {
+      // Let the result DOM paint first, then center the 3D section
+      const t = setTimeout(() => {
+        slamViewsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 180);
+      return () => clearTimeout(t);
+    }
+  }, [phase, result]);
 
   return (
     <main className="page">
@@ -269,7 +281,12 @@ export default function Page() {
             </div>
           </section>
 
-          <div className="views-grid" id="slam-views" style={{ scrollMarginTop: "16px" }}>
+          <div
+            className="views-grid"
+            id="slam-views"
+            ref={slamViewsRef}
+            style={{ scrollMarginTop: "16px" }}
+          >
             <section className="card">
               <h2>3D Sparse Point Cloud</h2>
               <PointCloudViewerDynamic points={result.points} />

@@ -80,6 +80,7 @@ videoSparse is structured as a **decoupled, modular monocular SLAM system**. It 
 │                              FASTAPI BACKEND (Python 3.11+)                            │
 │                                                                                        │
 │  • POST /api/slam (Multipart upload, isolated ephemeral execution dir)                 │
+│  • POST /api/slam/skip-optimization (Cooperative cancel of Phase 11, preserves trajectory) │
 │  • GET  /api/slam/progress & /phases (700ms polling for non-blocking UI updates)       │
 │  • GET  /api/slam/tracking-video/{id} (Browser-playable H.264 transcode cache)          │
 │  • GET  /api/sample-video & /info (Bundled video1.mp4 one-click demo testing)          │
@@ -94,7 +95,8 @@ videoSparse is structured as a **decoupled, modular monocular SLAM system**. It 
 │  [10. Local Map] ◄── [9. Keyframes] ◄── [8. Filter] ◄── [7. Triangulate] ◄─────┘      │
 │         │                                                                              │
 │         ▼                                                                              │
-│  [11. Huber Pose BA] ──► Final 3D Point Cloud + Camera Trajectory + Telemetry JSON     │
+│  [11. Huber Pose BA*] ─► Final 3D Point Cloud + Camera Trajectory + Telemetry JSON    │
+│         (*skippable via UI/CLI/API — uses trajectory from Phase 6 when skipped)       │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -123,6 +125,7 @@ videoSparse is structured as a **decoupled, modular monocular SLAM system**. It 
   - Statistical Outlier Removal (SOR) filtering based on mean $k$-nearest-neighbor distance distribution.
 - **Keyframe Selection & Local Mapping:** Extracts keyframes based on translation distance, angular rotation change, feature overlap ratios, and forced periodic intervals.
 - **Huber-Robust Pose-Only Bundle Adjustment:** Pose-graph refinement utilizing SciPy's `least_squares` with Huber loss weighting to dampen the effect of residual feature drift.
+- **One-Click Skip Optimization (Phase 11):** The expensive Huber bundle adjustment can be skipped entirely. When skipped, the pipeline preserves the trajectory from Phase 6 (Trajectory Chaining) as the final trajectory, never fakes optimized poses, and continues directly to finalization. Cooperative cancellation via `skip_control` checks at phase entry and on every `least_squares` residual/Jacobian evaluation (next safe checkpoint), never killing the whole SLAM job. Enabled via CLI (`--skip optimization`), API (`POST /api/slam/skip-optimization`), or UI (Skip buttons).
 
 ### 🖥️ Next.js Web Dashboard
 - **Real-Time SLAM Dashboard:** Live animated count-up metric cards displaying total processing time, average throughput (FPS), total reconstructed 3D map points, keyframe count, and processed frames.
@@ -132,7 +135,8 @@ videoSparse is structured as a **decoupled, modular monocular SLAM system**. It 
 - **Dynamic 3D WebGL Explorers (React Three Fiber):**
   - **3D Sparse Point Cloud Viewer:** Real-time orbit, zoom, and pan navigation with height-ramped color gradients (blue $\to$ cyan $\to$ yellow).
   - **Camera Trajectory Viewer:** Interactive 3D path visualization complete with green origin/start indicators, red termination markers, and frame orientation indices.
-- **Live Per-Phase Diagnostic Stream:** Accordion panel detailing all 11 phases with live status pills (`pending`, `running`, `done`, `failed`), per-phase wall clock execution times, and complete terminal output logs streamed live via polling.
+- **Live Per-Phase Diagnostic Stream:** Accordion panel detailing all 11 phases with live status pills (`pending`, `running`, `done`, `failed`, `skipped`), per-phase wall clock execution times, and complete terminal output logs streamed live via polling. Phase 11 shows “Pose optimization skipped / Using trajectory from previous phase” when skipped and a final `Pose Optimization: Skipped | Completed` indicator.
+- **Skip Optimization Controls (Render-aware):** Two single-click `Skip Optimization` buttons — a compact `Skip 11th step` next to `Run SLAM` in the Input Video card (auto-starts the job if idle) and a `Skip Optimization` button inside the Phase 11 card — both hit `POST /api/slam/skip-optimization` for instant cancellation on weak Render CPU/GPU. Helpful tip rendered directly below `Run SLAM`.
 - **One-Click Sample Verification:** Built-in default sample video button instantly tests the system using `video1.mp4` without requiring manual file uploads.
 
 ---
@@ -188,10 +192,24 @@ Every uploaded or CLI-supplied video executes through the canonical 11-phase seq
  ┌───────────────┐
  │11. OPTIMIZATION│  Pose-only Bundle Adjustment via SciPy least_squares with Huber robust loss
  └───────┬───────┘
-         │
-         ▼
-   Final Output: 3D Point Cloud (.npz) + Trajectory (.npz) + JSON Result + H.264 Video
+          │
+          ▼
+    Final Output: 3D Point Cloud (.npz) + Trajectory (.npz) + JSON Result + H.264 Video
+         (Phase 11 skipped → trajectory from Phase 6 is returned as final)
 ```
+
+### Skipping Pose Optimization (Phase 11) — Render Performance Control
+
+Pose optimization is the most expensive phase (SciPy `least_squares` over all keyframe–landmark reprojection residuals) and can take **many minutes on Render's weak CPU/GPU**. The pipeline supports a safe, cooperative skip that never fakes results:
+
+* **What it does:** Stops/never starts the Huber bundle adjustment, keeps the **existing trajectory produced by Phase 6 (Trajectory Chaining)** as the final trajectory, and continues directly `Phase 11 → Finalization → Results`. No trajectory recalculation, no synthetic optimized poses.
+* **Cancellation safety:** If Phase 11 is already running, the backend checks `skip_control.should_skip()` at phase entry **and on every residual/Jacobian evaluation** inside `least_squares`. At the next safe checkpoint it raises `SkipOptimization`, preserves the last valid trajectory, and proceeds to finalization — never killing the entire SLAM job.
+* **How to trigger:**
+  * **Web UI (preferred, one-click):** `Input Video → Skip 11th step` mini button below `Run SLAM` (enabled even when idle — it auto-starts SLAM then skips) **or** `Phase Parameters → Phase 11 → Skip Optimization` button (enabled for `pending`/`running` and also `idle`). Both call `POST /api/slam/skip-optimization` instantly.
+  * **REST API:** `POST /api/slam/skip-optimization` → `{ok:true}`; polling `GET /api/slam/phases` then shows `"status":"skipped"` with logs `Pose optimization skipped / Using trajectory from previous phase`.
+  * **CLI:** `python main.py --skip optimization` (or any subset of the 11 phase names; see [CLI Execution](#8-backend-engine--cli-reference)).
+* **Result signalling:** `POST /api/slam` response includes `optimization_skipped` (`bool`) + `optimization_status` (`"skipped"|"completed"`) and `phase_params.optimization = {skipped, status, ...}`. The UI renders `Pose Optimization: Skipped|Completed` and the Phase 11 card shows the two-line skipped notice.
+* **Nothing else changes:** ORB tracking, pose estimation, triangulation, point cloud, keyframe selection, local mapping and Three.js visualization are untouched.
 
 ### Phase Details & Mathematical Foundations
 
@@ -207,7 +225,7 @@ Every uploaded or CLI-supplied video executes through the canonical 11-phase seq
 | **8** | `filter` | `point_filter.py` | Reprojection error $\| \mathbf{x} - \pi(\mathbf{P}\mathbf{X}) \|_2 \le 2\text{px}$ + Statistical Outlier Removal (SOR) | Filtered, clean 3D sparse point cloud |
 | **9** | `keyframes` | `keyframes.py` | Multi-criteria gating: $\|\mathbf{t}\| > \theta_t \lor \Delta\theta > \theta_R \lor \text{overlap} < \theta_o$ | Sparse keyframe indices and selection causes |
 | **10** | `local_map` | `local_map.py` | Cross-frame landmark indexing and keyframe co-visibility graph generation | Keyframe-to-landmark association graph |
-| **11** | `optimization`| `optimization.py` | Huber-weighted non-linear least squares pose BA: $\min_{\mathbf{T}_k} \sum \rho_H(\| \mathbf{r}_{ij} \|^2)$ | Refined camera poses and convergence metrics |
+| **11** | `optimization`| `optimization.py` | Huber-weighted non-linear least squares pose BA: $\min_{\mathbf{T}_k} \sum \rho_H(\| \mathbf{r}_{ij} \|^2)$ — **skippable** (see below) | Refined camera poses and convergence metrics — or `skipped` preserves Phase-6 trajectory |
 
 ---
 
@@ -240,7 +258,8 @@ videoSparse/
 │   │   ├── point_filter.py        # Reprojection gating & SOR filtering
 │   │   ├── keyframes.py           # Adaptive keyframe selection logic
 │   │   ├── local_map.py           # Co-visibility graph & landmark indexing
-│   │   ├── optimization.py        # Huber-loss pose-only bundle adjustment
+│   │   ├── optimization.py        # Huber-loss pose-only bundle adjustment (skippable via skip_control)
+│   │   ├── skip_control.py        # Thread-safe skip flag for Phase 11 (requested by /skip-optimization)
 │   │   └── utils.py               # Geometry math, debug plotters & H.264 transcode
 │   └── output/                    # Generated CLI artifacts, plots, and cached videos
 │       └── tracking_cache/        # H.264 transcoded 2D tracking videos (LRU cache)
@@ -251,10 +270,10 @@ videoSparse/
     │   ├── page.tsx               # Main dashboard, state machine, and 3D viewers
     │   └── globals.css            # Dark glassmorphic SLAM styling system
     ├── components/
-    │   ├── DashboardMetrics.tsx   # Top animated count-up KPI cards & status pill
-    │   ├── VideoUpload.tsx        # File picker, video preview, live progress strip
-    │   ├── FeatureTrackingPanel.tsx# Annotated 2D tracking player, HUD & sparkline
-    │   ├── PhaseParameters.tsx    # Live 11-phase cards, timing & streamed logs
+│   ├── DashboardMetrics.tsx   # Top animated count-up KPI cards & status pill
+│   ├── VideoUpload.tsx        # File picker, video preview, live progress strip, Skip-11th-step mini button + tip
+│   ├── FeatureTrackingPanel.tsx# Annotated 2D tracking player, HUD & sparkline
+│   ├── PhaseParameters.tsx    # Live 11-phase cards (fully expanded), timing, streamed logs, Skip Optimization button
     │   ├── PointCloudViewer.tsx   # 3D height-colored point cloud (React Three Fiber)
     │   └── TrajectoryViewer.tsx   # 3D 6-DoF camera trajectory path (React Three Fiber)
     ├── lib/
@@ -369,6 +388,7 @@ The web application is tailored for high-density visual odometry inspection:
 │ • Drag & Drop / Default Video Button     │ • Autoplaying loop of annotated ORB video   │
 │ • File metadata (FPS, Res, Duration)     │ • Real-time HUD: Frame #, Feature Count     │
 │ • "Run SLAM" + Live execution strip      │ • Keypoints-per-frame sparkline & playhead  │
+│ • Tip + "Skip 11th step" mini button     │                                             │
 ├──────────────────────────────────────────┴─────────────────────────────────────────────┤
 │ TRACKING & MAP SUMMARY                                                                 │
 │ Mean Features: 427 │ ORB Range: 53-579 │ Reliable: 100% │ Matches: 113 │ Realtime: ×1.05│
@@ -377,16 +397,20 @@ The web application is tailored for high-density visual odometry inspection:
 │ • Orbit / Zoom / Pan Controls            │ • 3D 6-DoF trajectory curve in world space  │
 │ • Height-ramped colormap (Blue/Cyan/Gold)│ • Green start marker & Red end marker       │
 ├──────────────────────────────────────────┴─────────────────────────────────────────────┤
-│ 11-PHASE PARAMETERS & LIVE TERMINAL OUTPUT                                             │
-│ • Collapsible cards for all 11 phases with live progress pills                         │
+│ 11-PHASE PARAMETERS & LIVE TERMINAL OUTPUT (fully expanded, no scroll)                 │
+│ • All 11 phases always visible (no scroll) with live pills (idle/running/done/skipped)│
+│ • Phase 11 card: "Skip Optimization" button (also before start; idle click starts job)│
+│ • Skipped banner: "Pose optimization skipped / Using trajectory from previous phase"    │
 │ • Real terminal stdout stream captured directly from the Python backend                │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key UI Capabilities
+- **Skip-11th-Step Affordance:** Directly below `Run SLAM` a tip explains `Tip: you can skip the 11th step (Optimization)… Render's weak CPU/GPU` with a compact `Skip 11th step` button. When `IDLE`, clicking it auto-starts SLAM and immediately requests the skip (`POST /api/slam/skip-optimization`), yielding a faster result. The same control exists inside the Phase 11 card — single-click, no confirmation required.
 - **Synchronized Backend Timing:** The timer on the upload panel does not prematurely start on upload click; it triggers at the exact moment the backend acknowledges receipt and initializes Phase 1 (`probe`).
 - **Resilient 2D Tracking Player:** Seamlessly displays the backend-generated H.264 preview video. If video playback is unavailable, it automatically switches to a high-speed HTML5 2D canvas overlay using sampled ORB coordinates.
 - **Smart Viewport Positioning:** When SLAM completes, a floating badge *"View 3D Results"* appears, automatically disappearing when the user scrolls the 3D canvases into view via an `IntersectionObserver`.
+- **Fully Expanded Phase List:** Phase Parameters no longer caps height or scrolls — all 11 phases are always visible; only terminal `<pre>` tails inside `<details>` scroll.
 
 ---
 
@@ -414,7 +438,7 @@ python main.py --input test.mp4 --fps 15 --width 1280 --height 720
 For targeted debugging or research experiments, any phase can be skipped without modifying source code:
 
 ```bash
-# Skip optimization to inspect raw triangulated trajectory
+# Skip optimization to inspect raw triangulated trajectory (also skippable live via UI/API)
 python main.py --skip optimization
 
 # Skip heavy geometric stages
@@ -422,6 +446,8 @@ python main.py --skip local_map optimization
 ```
 
 *Valid `--skip` identifiers:* `probe`, `normalize`, `features`, `matching`, `motion`, `trajectory`, `triangulation`, `filter`, `keyframes`, `local_map`, `optimization`.
+
+> **Web/API equivalent:** `POST /api/slam/skip-optimization` — cooperative skip of Phase 11 while the job is running (or immediately before `probe` when `IDLE` via the `Skip 11th step` button below `Run SLAM`). The pipeline preserves the trajectory from previous phases as final, never faking BA results, and shows `Pose Optimization: Skipped` in the final JSON and UI. See [Skipping Pose Optimization (Phase 11)](#skipping-pose-optimization-phase-11--render-performance-control).
 
 ### Standalone 3D Visualization
 To render and inspect point clouds in native Open3D windows:
@@ -443,8 +469,9 @@ The FastAPI server provides typed endpoints for video processing, live execution
 | `GET` | `/health` | Liveness health check | None $\to$ `{"status": "ok"}` |
 | `GET` | `/` | Service root probe & docs link | None $\to$ Status & metadata |
 | `POST` | `/api/slam` | Execute full 11-phase SLAM run | Multipart Form: `video` (`.mp4` binary) |
+| `POST` | `/api/slam/skip-optimization` | **Skip Phase 11 (pose optimization) cooperatively** — preserves trajectory from Phase 6, continues to finalization | None $\to$ `{"ok":true}`; polled `GET /api/slam/phases` shows `status:"skipped"` with `Pose optimization skipped` log |
 | `GET` | `/api/slam/progress` | Poll overall progress status | None $\to$ Current stage & percentage |
-| `GET` | `/api/slam/phases` | Poll live per-phase states & logs | None $\to$ All 11 phases with stdout tails |
+| `GET` | `/api/slam/phases` | Poll live per-phase states & logs | None $\to$ All 11 phases with stdout tails (`status` includes `skipped`) |
 | `GET` | `/api/slam/tracking-video/{job_id}` | Stream browser-compatible H.264 video | Path: `job_id` $\to$ `video/mp4` stream |
 | `GET` | `/api/sample-video/info` | Query bundled sample video status | None $\to$ `{available, filename, size_bytes}` |
 | `GET` | `/api/sample-video` | Download bundled sample video | None $\to$ `video/mp4` binary stream |
@@ -490,6 +517,10 @@ The FastAPI server provides typed endpoints for video processing, live execution
     "pairs": 89
   },
 
+  // Pose Optimization result (never faked)
+  "optimization_skipped": false,        // true when Phase 11 was skipped via UI/CLI/API
+  "optimization_status": "completed",   // "completed" | "skipped"
+
   // Per-Phase Execution Breakdown
   "phase_times": {
     "probe": 0.005,
@@ -502,7 +533,15 @@ The FastAPI server provides typed endpoints for video processing, live execution
     "filter": 0.45,
     "keyframes": 0.12,
     "local_map": 0.21,
-    "optimization": 1.28
+    "optimization": 1.28             // ~0.02 when skipped (cancellation at checkpoint)
+  },
+  "phase_params": {
+    "optimization": {
+      "skipped": false,              // true when skipped — UI shows amber "Skipped" banner
+      "status": "completed",         // "completed" | "skipped"
+      "n_optimized": 38,
+      "n_obs": 4210
+    }
   },
   "tracking_video_url": "/api/slam/tracking-video/550e8400-e29b-41d4-a716-446655440000"
 }
@@ -552,7 +591,7 @@ When running via CLI or persistent server modes, all intermediate and final outp
 | `<name>_points3d_filtered_triview.png`| Image | Orthographic 3-view projection plot (XY, XZ, YZ planes) |
 | `<name>_keyframes.npz` | NumPy Archive | Selected keyframe frame indices and triggering criteria |
 | `<name>_local_map.npz` | NumPy Archive | Keyframe-to-landmark visibility association graph |
-| `<name>_slam_optimized.npz` | NumPy Archive | Final Huber-refined camera poses and converged residual errors |
+| `<name>_slam_optimized.npz` | NumPy Archive | Final Huber-refined camera poses and converged residual errors — **not written when Phase 11 is skipped** (final trajectory is the Phase-6 chain) |
 | `tracking_cache/<job_id>.mp4` | H.264 Video | Validated browser-playable MP4 tracking video stream |
 
 ---
@@ -617,7 +656,10 @@ The application is engineered for zero-friction deployment to modern cloud hosti
   - `SAMPLE_VIDEO_PATH`: `video1.mp4` (optional custom path to bundled test video)
 
 > [!IMPORTANT]
-> **Single Worker Recommendation:** Keep `--workers 1` unless you attach an external distributed store (Redis / S3) for the in-memory progress polling state and the tracking video cache.
+> **Single Worker Recommendation:** Keep `--workers 1` unless you attach an external distributed store (Redis / S3) for the in-memory progress polling state and the tracking video cache. **Required for skip:** `POST /api/slam/skip-optimization` flips the in-process `skip_control` flag; with multiple workers the flag would land on the wrong worker.
+
+> [!TIP]
+> **Render / weak CPU/GPU:** Pose optimization (Phase 11) can dominate wall time. Users can skip it from the UI (`Skip 11th step` below `Run SLAM` or `Phase 11 → Skip Optimization` — single-click, works even before the run and auto-starts it) or via `POST /api/slam/skip-optimization` mid-run. The backend cancels at the next `least_squares` checkpoint, preserves the Phase-6 trajectory, and returns `optimization_status:"skipped"`.
 
 ### 2. Frontend Deployment (Vercel / Render Static)
 - **Framework:** Next.js 14
@@ -659,6 +701,12 @@ In strict accordance with the repository's foundational guidelines (`instruction
    - *Root Cause:* The UI timer started on file upload button click rather than backend execution start.
    - *Permanent Fix:* Re-engineered timer lifecycle in `frontend/app/page.tsx` and `VideoUpload.tsx`: the timer starts strictly when the backend confirms receipt and initiates Phase 1 (`probe`).
 
+4. **Render Timeout on Pose Optimization (Phase 11)**
+   - *Symptom:* Huber BA runs many minutes on Render's weak CPU, causing slow final results or apparent hangs.
+   - *Temporary Patch (Rejected):* Hide the Phase 11 card or fake optimized poses after timeout.
+   - *Root Cause:* Phase 11 (`scipy.optimize.least_squares` with analytic sparse Jacobian) is CPU-bound by design and cannot finish fast on free-tier hosts.
+   - *Permanent Fix:* Introduced cooperative `skip_control` flag + `POST /api/slam/skip-optimization`. The optimization stage checks at entry and on every residual/Jacobian call; `SkipOptimization` aborts `least_squares` at the next checkpoint, preserves the trajectory from Phase 6 as final, writes no fake `_slam_optimized.npz`, and returns `optimization_status:"skipped"` with `Pose optimization skipped / Using trajectory from previous phase` in the phase log and Phase 11 UI banner.
+
 ---
 
 ## 15. Troubleshooting & FAQ
@@ -667,6 +715,9 @@ In strict accordance with the repository's foundational guidelines (`instruction
 | :--- | :--- | :--- |
 | **`API unreachable` in web UI** | Backend service is not active on port 8000 | Run `curl http://127.0.0.1:8000/health`. If down, start backend via `npm run dev:backend`. |
 | **`Port 8000 already in use`** | Another background uvicorn or python instance holds the port | Run `netstat -ano \| findstr :8000` (Windows) and kill the PID, or pass `--port 8001` (update `NEXT_PUBLIC_API_URL` accordingly). |
+| **Optimization slow on Render / timeout** | Phase 11 Huber BA is CPU-bound | Use `Skip 11th step` below `Run SLAM` (works even when `IDLE` — auto-starts then skips) or `Phase 11 → Skip Optimization`, or `POST /api/slam/skip-optimization`, or `python main.py --skip optimization`. Skipped jobs return the Phase-6 trajectory as final with `optimization_status:"skipped"`. |
+| **`Cannot find module './<n>.js'` in `.next`** | Stale Next.js webpack build cache | Delete `frontend/.next` directory and restart dev server (`npm run dev:frontend`). |
+| **Skip button does nothing** | Wrong worker or no active job | Ensure backend runs with `--workers 1` and the job is `running`/`pending`. After skip, `GET /api/slam/phases` shows `optimization: {status:"skipped"}` and the result JSON has `optimization_skipped:true`. |
 | **`Only .mp4 uploads are accepted`** | Uploaded file has an invalid extension or MIME type | Ensure the uploaded video is encapsulated in an `.mp4` container. |
 | **`Cannot find module './<n>.js'` in `.next`** | Stale Next.js webpack build cache | Delete `frontend/.next` directory and restart dev server (`npm run dev:frontend`). |
 | **3D view is blank or crashes** | Hardware acceleration disabled or WebGL blocked | Enable hardware acceleration in browser settings and verify via `chrome://gpu`. |
@@ -682,6 +733,7 @@ In strict accordance with the repository's foundational guidelines (`instruction
 - **Pure Rotational Motion:** Severe camera rotation without translational baseline causes DLT triangulation degeneracy.
 - **Low Texture / Overexposure:** Extremely dark or featureless sequences can trigger tracking loss and segment splits.
 - **Dynamic Entities:** Moving pedestrians or vehicles are treated as static scene features and can introduce slight motion bias.
+- **Skipped Optimization:** When Phase 11 is skipped, final poses are unrefined (Phase-6 chain) — accuracy may drop slightly but runtime is cut drastically on weak hosts (by design).
 
 ### Planned Roadmap
 - [ ] **Loop Closure Engine:** Visual bag-of-words (DBoW2) loop detection placed between `local_map` and `optimization`.
