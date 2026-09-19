@@ -146,7 +146,9 @@ export default function PhaseParameters({ result, phase }: Props) {
               (result?.optimization_skipped ?? Boolean(params?.["skipped"])) ||
               params?.["status"] === "skipped");
           const canSkip =
-            isOpt && busy && (p.status === "pending" || p.status === "running") && !optSkipped;
+            isOpt &&
+            !optSkipped &&
+            ((busy && (p.status === "pending" || p.status === "running")) || phase === "idle");
           return (
             <article key={p.name} data-phase={p.name} className={`phase-item phase-${p.status}`}>
               <header className="phase-head">

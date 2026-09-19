@@ -71,6 +71,7 @@ export default function Page() {
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<SlamResult | null>(null);
   const [sampleLoading, setSampleLoading] = useState(false);
+  const [sampleProgress, setSampleProgress] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(0);
   const busy = phase === "uploading" || phase === "processing";
@@ -146,9 +147,10 @@ export default function Page() {
   const handleUseSample = useCallback(async () => {
     if (busy || sampleLoading) return;
     setSampleLoading(true);
+    setSampleProgress(0);
     setMessage("");
     try {
-      const sample = await fetchSampleVideo();
+      const sample = await fetchSampleVideo((pct) => setSampleProgress(pct));
       handleSelect(sample);
     } catch (err) {
       setMessage(
@@ -156,6 +158,8 @@ export default function Page() {
       );
     } finally {
       setSampleLoading(false);
+      // keep 100% briefly so the user sees "100% fetched" before the preview lands
+      setTimeout(() => setSampleProgress(null), 800);
     }
   }, [busy, sampleLoading, handleSelect]);
 
@@ -185,6 +189,7 @@ export default function Page() {
           onRun={handleRun}
           onUseSample={handleUseSample}
           sampleLoading={sampleLoading}
+          sampleProgress={sampleProgress}
           onFirstStage={handleFirstStage}
         />
         <FeatureTrackingPanel previewUrl={previewUrl} result={result} phase={phase} />

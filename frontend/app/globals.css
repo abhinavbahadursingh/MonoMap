@@ -980,6 +980,43 @@ header p {
   word-break: break-word;
 }
 
+.run-slam-tip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  flex: 1;
+  min-width: 0;
+}
+
+.run-slam-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn-skip-mini {
+  flex: none;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  background: transparent;
+  border: 1px solid rgba(251, 191, 36, 0.6);
+  color: var(--amber);
+  box-shadow: none;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.btn-skip-mini:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.12);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.18);
+}
+
+.btn-skip-mini:disabled {
+  opacity: 0.55;
+}
+
 .done-dot {
   width: 18px;
   height: 18px;
@@ -1079,9 +1116,8 @@ header p {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 560px;
-  overflow-y: auto;
-  padding-right: 4px;
+  max-height: none;
+  overflow: visible;
 }
 
 .phase-item {

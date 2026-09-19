@@ -5,6 +5,7 @@ import {
   SAMPLE_VIDEO_FILENAME,
   STAGE_ORDER,
   fetchProgress,
+  skipOptimization,
   stageLabel,
   type Phase,
   type SlamProgress,
@@ -24,6 +25,7 @@ interface Props {
   onRun: () => void;
   onUseSample: () => void;
   sampleLoading: boolean;
+  sampleProgress: number | null; // 0-100 while fetching default video
   // Fired once when the backend initiates its very first stage after the
   // upload has completed. The parent uses it to start the elapsed timer.
   onFirstStage?: () => void;
@@ -56,6 +58,7 @@ export default function VideoUpload({
   onRun,
   onUseSample,
   sampleLoading,
+  sampleProgress,
   onFirstStage,
 }: Props) {
   const pick = (picked: File | null) => {
@@ -75,6 +78,8 @@ export default function VideoUpload({
     frames: null,
   });
   const [live, setLive] = useState<SlamProgress | null>(null);
+  const [skipping, setSkipping] = useState(false);
+  const [skipDone, setSkipDone] = useState(false);
 
   // Local stream metadata from the selected file (real, via the browser).
   useEffect(() => {
@@ -161,6 +166,40 @@ export default function VideoUpload({
     }));
   };
 
+  // Detect backend skip (after result lands: phase_params or result flags)
+  useEffect(() => {
+    if (result?.optimization_skipped) setSkipDone(true);
+    else if (phase === "idle") setSkipDone(false);
+  }, [result, phase]);
+
+  const handleSkip = async () => {
+    if (skipping || skipDone) return;
+    // If SLAM hasn't started, start it and then request skip (faster on weak CPU/GPU)
+    if (phase === "idle" || phase === "error" || phase === "done") {
+      if (!file) {
+        alert("Select an .mp4 or use the default testing video first.");
+        return;
+      }
+      setSkipping(true);
+      setSkipDone(true);
+      // Fire a pre-flag (in case the backend hasn't yet reset) and start the job
+      skipOptimization();
+      onRun();
+      // The pipeline resets the skip flag at job start, so re-request shortly after
+      setTimeout(async () => {
+        const ok = await skipOptimization();
+        if (!ok) setSkipDone(false);
+        setSkipping(false);
+      }, 600);
+      return;
+    }
+    setSkipping(true);
+    const ok = await skipOptimization();
+    if (ok) setSkipDone(true);
+    setTimeout(() => setSkipping(false), 1200);
+    if (!ok) setSkipping(false);
+  };
+
   // Backend probe values after a run are the authoritative FPS/frame count.
   // Known specs for the bundled sample (backend/video1.mp4) so Size /
   // Duration / Resolution / FPS / Frames can render beside the preview
@@ -208,9 +247,30 @@ export default function VideoUpload({
           title={`Load ${SAMPLE_VIDEO_FILENAME} from the backend as the input`}
         >
           {sampleLoading
-            ? "Loading sample…"
+            ? sampleProgress !== null
+              ? `Fetching video ${sampleProgress}% fetched`
+              : "Fetching video…"
             : `Use default testing video (${SAMPLE_VIDEO_FILENAME})`}
         </button>
+        {sampleLoading && (
+          <div className="run-strip">
+            {sampleProgress !== null ? (
+              <>
+                <div className="bar">
+                  <div className="bar-fill" style={{ width: `${sampleProgress}%` }} />
+                </div>
+                <p className="muted">Fetching video {sampleProgress}% fetched</p>
+              </>
+            ) : (
+              <>
+                <div className="bar bar-indeterminate" aria-hidden="true">
+                  <div className="bar-fill bar-slide" />
+                </div>
+                <p className="muted">Fetching video…</p>
+              </>
+            )}
+          </div>
+        )}
         {previewUrl ? (
           <div className="video-side">
             <video
@@ -257,6 +317,21 @@ export default function VideoUpload({
         <button className="btn btn-run" disabled={!file || busy} onClick={onRun}>
           {busy ? "Running SLAM…" : "Run SLAM"}
         </button>
+        <div className="run-slam-tip-row">
+          <p className="muted run-slam-tip">
+            Tip: you can skip the 11th step (Optimization) by clicking the Skip Optimization button down
+            in Phase Parameters — faster result on Render&apos;s weak CPU/GPU.
+          </p>
+          <button
+            className="btn btn-skip-mini"
+            type="button"
+            onClick={handleSkip}
+            disabled={skipping || skipDone || (!file && (phase === "idle" || phase === "error"))}
+            title="Skip pose optimization (Phase 11) and use trajectory from previous phases — starts processing if idle"
+          >
+            {skipDone ? "Skipped ✓" : skipping ? "Skipping…" : "Skip 11th step"}
+          </button>
+        </div>
       </div>
 
       {phase === "uploading" && progress !== null && (

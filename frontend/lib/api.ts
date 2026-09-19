@@ -196,18 +196,47 @@ export async function fetchSampleInfo(): Promise<SampleVideoInfo | null> {
   }
 }
 
-/** Download the backend's default testing video as a File (for preview + Run SLAM). */
-export async function fetchSampleVideo(): Promise<File> {
-  const res = await fetch(`${API_BASE}/api/sample-video`, { cache: "no-store" });
-  if (res.status === 404) {
-    throw new Error(
-      "Default testing video (video1.mp4) is not available on the server.",
-    );
-  }
-  if (!res.ok) throw new Error(`Sample video request failed (${res.status})`);
-  const blob = await res.blob();
-  if (!blob.size) throw new Error("Sample video download was empty.");
-  return new File([blob], SAMPLE_VIDEO_FILENAME, { type: "video/mp4" });
+/** Download the backend's default testing video as a File (for preview + Run SLAM).
+ * Uses XHR so the caller can report real download progress for the 40+ MB file.
+ */
+export async function fetchSampleVideo(
+  onProgress?: (percent: number) => void,
+): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", `${API_BASE}/api/sample-video`);
+    xhr.responseType = "blob";
+    xhr.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      } else if (onProgress && e.loaded > 0) {
+        // Fallback when Content-Length missing: show indeterminate via
+        // capped estimate so the UI still animates (handled by caller).
+        // We do not fake a percent; caller shows indeterminate bar.
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 404) {
+        reject(new Error("Default testing video (video1.mp4) is not available on the server."));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Sample video request failed (${xhr.status})`));
+        return;
+      }
+      const blob = xhr.response as Blob;
+      if (!blob || !blob.size) {
+        reject(new Error("Sample video download was empty."));
+        return;
+      }
+      // Ensure 100% at the end if length was computable.
+      if (onProgress) onProgress(100);
+      resolve(new File([blob], SAMPLE_VIDEO_FILENAME, { type: "video/mp4" }));
+    };
+    xhr.onerror = () => reject(new Error(`API unreachable at ${API_BASE} — is the backend running?`));
+    xhr.onabort = () => reject(new Error("Sample video download cancelled."));
+    xhr.send();
+  });
 }
 
 /**
