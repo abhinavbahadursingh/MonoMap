@@ -457,6 +457,60 @@ header p {
   margin: 10px 2px 0;
 }
 
+/* Axes + direction legend overlay in the Camera Trajectory viewer. */
+.viewer-axes {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text);
+  background: rgba(6, 18, 31, 0.78);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.axis-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.axis-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.axis-x {
+  background: #ff5566;
+  box-shadow: 0 0 8px rgba(255, 85, 102, 0.8);
+}
+
+.axis-y {
+  background: #22ff66;
+  box-shadow: 0 0 8px rgba(34, 255, 102, 0.8);
+}
+
+.axis-z {
+  background: #4488ff;
+  box-shadow: 0 0 8px rgba(68, 136, 255, 0.8);
+}
+
+.axis-dir {
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
 .dot-start {
   color: #22ff66;
 }
@@ -686,8 +740,74 @@ header p {
   min-width: 0;
 }
 
-.preview-compact {
-  max-height: 150px;
+.input-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Video preview with its 5 spec tiles directly beside it. */
+.video-side {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+  align-items: stretch;
+  margin: 12px 0 4px;
+}
+
+.preview-side {
+  margin: 0 !important;
+  max-height: 220px;
+  height: 100%;
+  object-fit: contain;
+}
+
+.file-meta-side {
+  margin: 0;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.spec-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.spec-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(148, 163, 255, 0.12);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spec-row:last-child {
+  border-bottom: none;
+}
+
+.spec-row dt {
+  margin: 0;
+}
+
+.spec-row dd {
+  margin: 0;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .video-side {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Hide the native filename text next to the Browse button — the styled
@@ -897,25 +1017,6 @@ header p {
 .viewer-meta {
   margin: 10px 2px 0;
   font-variant-numeric: tabular-nums;
-}
-
-.scroll-fab-wrap {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 18px;
-  display: flex;
-  justify-content: center;
-  z-index: 50;
-  pointer-events: none;
-  animation: rise 0.4s ease both;
-}
-
-.scroll-fab {
-  pointer-events: auto;
-  padding: 12px 26px;
-  border-radius: 999px;
-  font-size: 14px;
 }
 
 .track-hud {

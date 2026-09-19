@@ -162,11 +162,20 @@ export default function VideoUpload({
   };
 
   // Backend probe values after a run are the authoritative FPS/frame count.
-  const fps = result?.input_fps || meta.fps;
-  const frames = result?.input_frames || meta.frames;
-  const duration = result?.video_duration_sec ?? meta.duration;
-  const width = result?.input_width || meta.width;
-  const height = result?.input_height || meta.height;
+  // Known specs for the bundled sample (backend/video1.mp4) so Size /
+  // Duration / Resolution / FPS / Frames can render beside the preview
+  // even before the browser reports metadata or SLAM has run.
+  const isSample = file?.name === SAMPLE_VIDEO_FILENAME;
+  const fps = result?.input_fps || meta.fps || (isSample ? 25 : null);
+  const duration = result?.video_duration_sec ?? meta.duration ?? (isSample ? 8.96 : null);
+  const width = result?.input_width || meta.width || (isSample ? 3840 : null);
+  const height = result?.input_height || meta.height || (isSample ? 2160 : null);
+  const frames =
+    result?.input_frames ||
+    meta.frames ||
+    (duration && fps ? Math.round(Number(duration) * Number(fps)) : null) ||
+    (isSample ? 224 : null);
+  const sizeMb = file ? file.size / 1024 / 1024 : isSample ? 42.8 : null;
 
   const showStageCount =
     phase === "processing" && live && live.stage_index > 0 && live.stage_total > 0;
@@ -182,31 +191,31 @@ export default function VideoUpload({
           </span>
         )}
       </div>
-      <div className="input-split">
-        <div className="input-pane">
-          <label className="file-row">
-            <input
-              type="file"
-              accept="video/mp4,.mp4"
-              disabled={busy}
-              onChange={(e) => pick(e.target.files?.[0] ?? null)}
-            />
-          </label>
-          <button
-            className="btn btn-sample"
-            type="button"
-            disabled={busy || sampleLoading}
-            onClick={onUseSample}
-            title={`Load ${SAMPLE_VIDEO_FILENAME} from the backend as the input`}
-          >
-            {sampleLoading
-              ? "Loading sample…"
-              : `Use default testing video (${SAMPLE_VIDEO_FILENAME})`}
-          </button>
-          {previewUrl && (
+      <div className="input-stack">
+        <label className="file-row">
+          <input
+            type="file"
+            accept="video/mp4,.mp4"
+            disabled={busy}
+            onChange={(e) => pick(e.target.files?.[0] ?? null)}
+          />
+        </label>
+        <button
+          className="btn btn-sample"
+          type="button"
+          disabled={busy || sampleLoading}
+          onClick={onUseSample}
+          title={`Load ${SAMPLE_VIDEO_FILENAME} from the backend as the input`}
+        >
+          {sampleLoading
+            ? "Loading sample…"
+            : `Use default testing video (${SAMPLE_VIDEO_FILENAME})`}
+        </button>
+        {previewUrl ? (
+          <div className="video-side">
             <video
               ref={videoRef}
-              className="preview preview-compact"
+              className="preview preview-side"
               src={previewUrl}
               controls
               muted
@@ -214,39 +223,40 @@ export default function VideoUpload({
               preload="metadata"
               onLoadedMetadata={onLoadedMetadata}
             />
-          )}
-          {!file && <p className="muted">Select an .mp4 file to begin.</p>}
-        </div>
-        <div className="input-pane">
-          {file ? (
-            <div className="file-meta">
-              <div className="file-name" title={file.name}>
-                {file.name}
+            <div className="file-meta file-meta-side">
+              <div className="file-name" title={file?.name ?? ""}>
+                {file?.name ?? "video1.mp4"}
               </div>
-              <div className="file-grid-split">
-                <div className="file-grid">
-                  <span className="muted">Size</span>
-                  <span>{(file.size / 1024 / 1024).toFixed(1)} MB</span>
-                  <span className="muted">Duration</span>
-                  <span>{duration !== null && duration !== undefined ? fmtDuration(Number(duration)) : "—"}</span>
-                  <span className="muted">Resolution</span>
-                  <span>{width && height ? `${width}×${height}` : "—"}</span>
+              <dl className="spec-list">
+                <div className="spec-row">
+                  <dt className="muted">Size</dt>
+                  <dd>{sizeMb !== null ? `${sizeMb.toFixed(1)} MB` : "—"}</dd>
                 </div>
-                <div className="file-grid">
-                  <span className="muted">FPS</span>
-                  <span>{fps ? Number(fps).toFixed(2) : "—"}</span>
-                  <span className="muted">Frames</span>
-                  <span>{frames ? Number(frames).toLocaleString() : "—"}</span>
+                <div className="spec-row">
+                  <dt className="muted">Duration</dt>
+                  <dd>{duration !== null && duration !== undefined ? fmtDuration(Number(duration)) : "—"}</dd>
                 </div>
-              </div>
+                <div className="spec-row">
+                  <dt className="muted">Resolution</dt>
+                  <dd>{width && height ? `${width}×${height}` : "—"}</dd>
+                </div>
+                <div className="spec-row">
+                  <dt className="muted">FPS</dt>
+                  <dd>{fps ? Number(fps).toFixed(2) : "—"}</dd>
+                </div>
+                <div className="spec-row">
+                  <dt className="muted">Frames</dt>
+                  <dd>{frames ? Number(frames).toLocaleString() : "—"}</dd>
+                </div>
+              </dl>
             </div>
-          ) : (
-            <p className="muted">File details appear here.</p>
-          )}
-          <button className="btn btn-run" disabled={!file || busy} onClick={onRun}>
-            {busy ? "Running SLAM…" : "Run SLAM"}
-          </button>
-        </div>
+          </div>
+        ) : (
+          <p className="muted">Select an .mp4 file to begin.</p>
+        )}
+        <button className="btn btn-run" disabled={!file || busy} onClick={onRun}>
+          {busy ? "Running SLAM…" : "Run SLAM"}
+        </button>
       </div>
 
       {phase === "uploading" && progress !== null && (

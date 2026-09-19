@@ -42,7 +42,7 @@ tsconfig.tsbuildinfo
 # Per-run pipeline outputs (normalized video, .npz maps, plots, previews)
 backend/output/
 # Raw / sample videos are large binaries — keep them out of git
-*.mp4
+
 *.avi
 *.mov
 *.mkv

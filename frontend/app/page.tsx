@@ -73,28 +73,7 @@ export default function Page() {
   const [sampleLoading, setSampleLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startRef = useRef(0);
-  const viewsRef = useRef<HTMLDivElement | null>(null);
   const busy = phase === "uploading" || phase === "processing";
-  const [viewsVisible, setViewsVisible] = useState(false);
-
-  // Hide the floating button once the 3D results are on screen.
-  useEffect(() => {
-    const el = viewsRef.current;
-    if (!el || phase !== "done" || !result) {
-      setViewsVisible(false);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      ([entry]) => setViewsVisible(entry.isIntersecting),
-      { threshold: 0.15 },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [phase, result]);
-
-  const scrollToResults = useCallback(() => {
-    viewsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -271,16 +250,13 @@ export default function Page() {
         )}
       </section>
 
-      {/* ALL PHASES — live parameters + terminal output from the pipeline */}
-      <div className="phase-section">
-        <PhaseParameters result={result} phase={phase} />
-      </div>
-
+      {/* SLAM RESULT + 3D VIEWS — directly below Tracking & Map Summary */}
       {result && (
         <div className="result-enter" key={`${result.processing_time_sec}-${result.point_count}`}>
           <section className="card">
             <h2>SLAM result</h2>
             <div className="stats-grid">
+              <Stat value={result.video_duration_sec} decimals={2} suffix=" s" label="original video duration" />
               <Stat value={result.processing_time_sec} decimals={1} suffix=" s" label="processing time" />
               <Stat value={result.frame_count} label="frames" sub={`of ${result.input_frames} uploaded`} />
               <Stat value={result.point_count} label="3D points" sub={`${result.keyframe_count} keyframes`} />
@@ -288,7 +264,7 @@ export default function Page() {
             </div>
           </section>
 
-          <div className="views-grid" ref={viewsRef} id="slam-views" style={{ scrollMarginTop: "16px" }}>
+          <div className="views-grid" id="slam-views" style={{ scrollMarginTop: "16px" }}>
             <section className="card">
               <h2>3D Sparse Point Cloud</h2>
               <PointCloudViewerDynamic points={result.points} />
@@ -309,13 +285,10 @@ export default function Page() {
         </div>
       )}
 
-      {phase === "done" && result && !viewsVisible && (
-        <div className="scroll-fab-wrap">
-          <button className="btn scroll-fab" onClick={scrollToResults}>
-            View 3D Results ↓
-          </button>
-        </div>
-      )}
+      {/* ALL PHASES — live parameters + terminal output from the pipeline */}
+      <div className="phase-section">
+        <PhaseParameters result={result} phase={phase} />
+      </div>
     </main>
   );
 }
