@@ -24,6 +24,9 @@ interface Props {
   onRun: () => void;
   onUseSample: () => void;
   sampleLoading: boolean;
+  // Fired once when the backend initiates its very first stage after the
+  // upload has completed. The parent uses it to start the elapsed timer.
+  onFirstStage?: () => void;
 }
 
 interface VideoMeta {
@@ -53,6 +56,7 @@ export default function VideoUpload({
   onRun,
   onUseSample,
   sampleLoading,
+  onFirstStage,
 }: Props) {
   const pick = (picked: File | null) => {
     if (picked && !picked.name.toLowerCase().endsWith(".mp4")) {
@@ -77,22 +81,37 @@ export default function VideoUpload({
     setMeta({ duration: null, width: null, height: null, fps: null, frames: null });
   }, [previewUrl]);
 
-  // Poll the real backend stage while SLAM crunches.
+  const firstStageNotifiedRef = useRef(false);
+  const onFirstStageRef = useRef(onFirstStage);
+  onFirstStageRef.current = onFirstStage;
+
+  // Poll the real backend stage while SLAM crunches. The first time the
+  // backend reports an active stage, the upload is fully received and the
+  // pipeline has initiated — notify the parent once so it can start the
+  // elapsed timer from that moment.
   useEffect(() => {
     if (phase !== "processing") {
       if (phase !== "uploading") setLive(null);
+      if (phase === "idle" || phase === "uploading") {
+        firstStageNotifiedRef.current = false;
+      }
       return;
     }
     let stop = false;
     let fallbackIdx = 0;
+    const notifyFirstStageOnce = () => {
+      if (!firstStageNotifiedRef.current) {
+        firstStageNotifiedRef.current = true;
+        onFirstStageRef.current?.();
+      }
+    };
     const tick = async () => {
       const p = await fetchProgress();
       if (stop) return;
-      if (p && (p.active || p.stage !== "idle")) {
-        setLive(p);
-      } else {
+      if (p === null) {
         // Backend endpoint unreachable — cycle the real phase names as an
-        // indeterminate indicator (no fake percent attached).
+        // indeterminate indicator (no fake percent attached). The upload
+        // itself is complete, so this is the best available start signal.
         fallbackIdx = (fallbackIdx + 1) % STAGE_ORDER.length;
         setLive({
           active: true,
@@ -101,7 +120,27 @@ export default function VideoUpload({
           stage_total: STAGE_ORDER.length,
           percent: 0,
         });
+        notifyFirstStageOnce();
+        return;
       }
+      if (p.active) {
+        // Genuine first-stage signal: the backend has received the upload
+        // and initiated the pipeline (probe → …). Start the timer here.
+        setLive(p);
+        notifyFirstStageOnce();
+        return;
+      }
+      // Reachable but idle/done/error: either the new run has not initiated
+      // yet (stale previous result) or it already finished. Show a waiting
+      // state without starting the timer — the timer must not include
+      // upload time or stale runs.
+      setLive({
+        active: true,
+        stage: "loading video",
+        stage_index: 0,
+        stage_total: STAGE_ORDER.length,
+        percent: 0,
+      });
     };
     tick();
     const t = setInterval(tick, 600);

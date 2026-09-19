@@ -65,9 +65,12 @@ function fmtInt(n: number): string {
 /** Compact professional metrics dashboard. All values come from the backend. */
 export default function DashboardMetrics({ result, phase, liveElapsed }: Props) {
   const busy = phase === "uploading" || phase === "processing";
+  // The elapsed timer only runs during backend processing (after the upload
+  // completes and the first stage initiates), so only animate it then.
+  const isProcessing = phase === "processing";
   const has = result !== null;
 
-  const processingTime = has ? result.processing_time_sec : busy ? liveElapsed : 0;
+  const processingTime = has ? result.processing_time_sec : isProcessing ? liveElapsed : 0;
   const avgFps = has ? (result.avg_fps || 0) : 0;
   const mapPoints = has ? (result.map_points || result.point_count) : 0;
   const keyframes = has ? result.keyframe_count : 0;
@@ -105,12 +108,12 @@ export default function DashboardMetrics({ result, phase, liveElapsed }: Props) 
           display={
             has
               ? `${result.processing_time_sec.toFixed(1)} s`
-              : busy
+              : isProcessing
                 ? `${liveElapsed.toFixed(1)} s`
                 : "—"
           }
           raw={processingTime}
-          live={busy && !has}
+          live={isProcessing && !has}
         />
         <Metric
           label="Avg FPS"

@@ -96,20 +96,29 @@ export default function Page() {
     viewsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const stopTimer = () => {
+  const stopTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
-  };
-  useEffect(() => stopTimer, []);
+  }, []);
+  useEffect(() => stopTimer, [stopTimer]);
 
-  const startTimer = () => {
-    stopTimer();
+  // Elapsed measures backend processing only: it starts when the upload has
+  // finished (100%) AND the backend has initiated its very first stage
+  // (reported via /api/slam/progress), not on the Run SLAM click.
+  const startTimer = useCallback(() => {
+    if (timerRef.current) return;
     startRef.current = performance.now();
     setElapsed(0);
     timerRef.current = setInterval(() => {
       setElapsed((performance.now() - startRef.current) / 1000);
     }, 250);
-  };
+  }, []);
+
+  // Called once by VideoUpload when the backend first reports an active
+  // stage. This is the "first stage initiated" moment for the timer.
+  const handleFirstStage = useCallback(() => {
+    startTimer();
+  }, [startTimer]);
 
   const handleSelect = useCallback(
     (picked: File | null) => {
@@ -131,10 +140,14 @@ export default function Page() {
     setMessage("");
     setPhase("uploading");
     setProgress(0);
-    startTimer();
+    stopTimer();
+    startRef.current = 0;
+    setElapsed(0);
     try {
       const res = await uploadVideo(file, (pct) => {
         setProgress(pct);
+        // Upload is complete here; the elapsed timer itself still waits for
+        // handleFirstStage (backend active stage) before starting.
         if (pct >= 100) setPhase("processing");
       });
       setResult(res);
@@ -145,9 +158,11 @@ export default function Page() {
       setPhase("error");
     } finally {
       stopTimer();
-      setElapsed((performance.now() - startRef.current) / 1000);
+      if (startRef.current) {
+        setElapsed((performance.now() - startRef.current) / 1000);
+      }
     }
-  }, [file, busy]);
+  }, [file, busy, stopTimer]);
 
   const handleUseSample = useCallback(async () => {
     if (busy || sampleLoading) return;
@@ -191,6 +206,7 @@ export default function Page() {
           onRun={handleRun}
           onUseSample={handleUseSample}
           sampleLoading={sampleLoading}
+          onFirstStage={handleFirstStage}
         />
         <FeatureTrackingPanel previewUrl={previewUrl} result={result} phase={phase} />
       </div>
