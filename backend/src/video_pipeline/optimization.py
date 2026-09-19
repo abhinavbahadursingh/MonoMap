@@ -43,6 +43,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from video_pipeline.context import VideoContext
+from video_pipeline.skip_control import SkipOptimization, should_skip
 from video_pipeline.stages import Stage
 from video_pipeline.utils import render_colored_triview, sibling_output
 
@@ -162,6 +163,8 @@ def analytic_jacobian(params: np.ndarray, opt_ordinals: List[int],
 
     Same minimum as finite differences, ~15x fewer residual evaluations.
     """
+    if should_skip():
+        raise SkipOptimization("Pose optimization skipped by user request")
     from scipy import sparse
     R_list, C_list = unpack_params(params, len(opt_ordinals))
     slot_of = {k: i for i, k in enumerate(opt_ordinals)}
@@ -203,6 +206,8 @@ def reprojection_residuals(params: np.ndarray, opt_ordinals: List[int],
                            obs: Dict[str, np.ndarray], landmark_pos: np.ndarray,
                            K: np.ndarray) -> np.ndarray:
     """Stacked (observed - projected) pixel residuals for the observation set."""
+    if should_skip():
+        raise SkipOptimization("Pose optimization skipped by user request")
     R_list, C_list = unpack_params(params, len(opt_ordinals))
     R_all = {0: _rvec_to_R(rvec_fixed)}
     C_all = {0: C_fixed.copy()}
@@ -247,6 +252,25 @@ class PoseOptimizationStage(Stage):
     # stage entry point
     # ------------------------------------------------------------------ #
     def process(self, ctx: VideoContext) -> VideoContext:
+        if should_skip():
+            # User requested skip before the stage even started.
+            print("\n[SKIP] Pose optimization skipped by user request — using trajectory from previous phase.")
+            print("Pose optimization skipped")
+            print("Using trajectory from previous phase")
+            # Minimal shared entry so the API can report "Skipped".
+            ctx.shared["optimization"] = {
+                "n_keyframes": 0,
+                "n_optimized": 0,
+                "n_obs": 0,
+                "n_params": 0,
+                "rms_before": float("nan"),
+                "rms_after": float("nan"),
+                "scipy": {"status": "skipped", "success": False, "message": "Skipped by user request"},
+                "scale_note": OPT_SCALE_NOTE,
+                "skipped": True,
+                "optimized_path": "",
+            }
+            return ctx
         video_path = ctx.output_path
         map_path = sibling_output(video_path, "_local_map.npz")
         motion_path = sibling_output(video_path, "_motion.npz")
@@ -269,10 +293,50 @@ class PoseOptimizationStage(Stage):
                         for m in range(len(saved["landmark_pos"]))]
         landmark_pos = np.array(saved["landmark_pos"], dtype=np.float64)
 
+        # Re-check skip after the cheap loads: if the user hit Skip while
+        # the previous phases were finishing, we still skip the expensive
+        # association + least_squares.
+        if should_skip():
+            print("\n[SKIP] Pose optimization skipped by user request — using trajectory from previous phase.")
+            print("Pose optimization skipped")
+            print("Using trajectory from previous phase")
+            ctx.shared["optimization"] = {
+                "n_keyframes": len(kf_ids),
+                "n_optimized": 0,
+                "n_obs": 0,
+                "n_params": 0,
+                "rms_before": float("nan"),
+                "rms_after": float("nan"),
+                "scipy": {"status": "skipped", "success": False, "message": "Skipped by user request"},
+                "scale_note": OPT_SCALE_NOTE,
+                "skipped": True,
+                "optimized_path": "",
+            }
+            return ctx
+
         obs = build_observations(kf_ids, kf_R, kf_C, kf_kp, landmark_pos,
                                  landmark_obs, K, self.config.assoc_gate_px)
         opt_ordinals = sorted(set(int(k) for k in obs["kf_ord"]))
         fitted = self._optimize(obs, opt_ordinals, kf_R, kf_C, landmark_pos, K)
+
+        if fitted.get("skipped"):
+            print("\n[SKIP] Pose optimization skipped — using trajectory from previous phase.")
+            print("Pose optimization skipped")
+            print("Using trajectory from previous phase")
+            # Preserve the existing trajectory: do NOT write a new _slam_optimized.npz.
+            ctx.shared["optimization"] = {
+                "n_keyframes": len(kf_ids),
+                "n_optimized": 0,
+                "n_obs": fitted.get("n_obs", 0),
+                "n_params": 0,
+                "rms_before": fitted.get("rms_before", float("nan")),
+                "rms_after": fitted.get("rms_after", float("nan")),
+                "scipy": fitted.get("scipy", {"status": "skipped"}),
+                "scale_note": OPT_SCALE_NOTE,
+                "skipped": True,
+                "optimized_path": "",
+            }
+            return ctx
 
         optimized_path = sibling_output(video_path, "_slam_optimized.npz")
         self._save_optimized(optimized_path, saved, kf_ids, fitted, K, obs,
@@ -293,6 +357,20 @@ class PoseOptimizationStage(Stage):
     def _optimize(self, obs: Dict[str, np.ndarray], opt_ordinals: List[int],
                   kf_R: List[np.ndarray], kf_C: List[np.ndarray],
                   landmark_pos: np.ndarray, K: np.ndarray) -> Dict:
+        if should_skip():
+            # Skip requested before least_squares — return a cooperative
+            # skipped result that preserves the incoming trajectory.
+            print("\n[SKIP] Pose optimization cancelled before start — using previous trajectory.")
+            return {
+                "opt_R": dict(enumerate(kf_R)),
+                "opt_C": dict(enumerate(kf_C)),
+                "opt_ordinals": [],
+                "rms_before": float("nan"),
+                "rms_after": float("nan"),
+                "scipy": {"status": "skipped", "success": False, "message": "Skipped by user request"},
+                "n_obs": len(obs["kf_ord"]),
+                "skipped": True,
+            }
         n_obs = len(obs["kf_ord"])
         rvec_fixed, C_fixed = _R_to_rvec(kf_R[0]), kf_C[0].copy()
         if not n_obs or not opt_ordinals:
@@ -304,10 +382,37 @@ class PoseOptimizationStage(Stage):
                          [kf_C[k] for k in opt_ordinals])
         args = (opt_ordinals, rvec_fixed, C_fixed, obs, landmark_pos, K)
         rms_before = rms(reprojection_residuals(x0, *args))
-        result = least_squares(
-            reprojection_residuals, x0, jac=analytic_jacobian, args=args,
-            method="trf", loss="huber", f_scale=self.config.huber_f_scale,
-            verbose=0)
+        if should_skip():
+            print("\n[SKIP] Pose optimization cancelled before least_squares — using previous trajectory.")
+            return {
+                "opt_R": dict(enumerate(kf_R)),
+                "opt_C": dict(enumerate(kf_C)),
+                "opt_ordinals": [],
+                "rms_before": rms_before,
+                "rms_after": float("nan"),
+                "scipy": {"status": "skipped", "success": False, "message": "Skipped by user request"},
+                "n_obs": n_obs,
+                "skipped": True,
+            }
+        try:
+            result = least_squares(
+                reprojection_residuals, x0, jac=analytic_jacobian, args=args,
+                method="trf", loss="huber", f_scale=self.config.huber_f_scale,
+                verbose=0)
+        except SkipOptimization:
+            print("\n[SKIP] Pose optimization cancelled during least_squares — using previous trajectory.")
+            print("Pose optimization skipped")
+            print("Using trajectory from previous phase")
+            return {
+                "opt_R": dict(enumerate(kf_R)),
+                "opt_C": dict(enumerate(kf_C)),
+                "opt_ordinals": [],
+                "rms_before": rms_before,
+                "rms_after": float("nan"),
+                "scipy": {"status": "skipped", "success": False, "message": "Skipped by user request (cancelled at checkpoint)"},
+                "n_obs": n_obs,
+                "skipped": True,
+            }
         rms_after = rms(reprojection_residuals(result.x, *args))
         R_opt, C_opt = unpack_params(result.x, len(opt_ordinals))
         opt_R = dict(enumerate(kf_R))

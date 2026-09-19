@@ -5,6 +5,7 @@ import {
   PHASE_LABELS,
   PHASE_ORDER,
   fetchPhases,
+  skipOptimization,
   type Phase,
   type PhaseInfo,
   type SlamResult,
@@ -41,6 +42,7 @@ const STATUS_PILL: Record<PhaseInfo["status"], string> = {
   running: "pill-busy",
   done: "pill-done",
   failed: "pill-error",
+  skipped: "pill-warn",
 };
 
 /**
@@ -52,6 +54,7 @@ const STATUS_PILL: Record<PhaseInfo["status"], string> = {
 export default function PhaseParameters({ result, phase }: Props) {
   const busy = phase === "uploading" || phase === "processing";
   const [live, setLive] = useState<PhaseInfo[] | null>(null);
+  const [skipping, setSkipping] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const runningRef = useRef<string | null>(null);
 
@@ -99,7 +102,16 @@ export default function PhaseParameters({ result, phase }: Props) {
     }
   }, [phases]);
 
-  const doneCount = phases.filter((p) => p.status === "done").length;
+  const doneCount = phases.filter((p) => p.status === "done" || p.status === "skipped").length;
+
+  const handleSkip = async () => {
+    if (skipping) return;
+    setSkipping(true);
+    const ok = await skipOptimization();
+    // Poll will pick up the new status quickly; keep button disabled briefly
+    setTimeout(() => setSkipping(false), 1200);
+    if (!ok) setSkipping(false);
+  };
 
   return (
     <section className="card" aria-label="Phase parameters">
@@ -127,6 +139,14 @@ export default function PhaseParameters({ result, phase }: Props) {
           const params = result?.phase_params?.[p.name] as Record<string, unknown> | undefined;
           const entries = params ? Object.entries(params).filter(([, v]) => v !== undefined) : [];
           const elapsed = p.elapsed_sec || result?.phase_times?.[p.name] || 0;
+          const isOpt = p.name === "optimization";
+          const optSkipped =
+            isOpt &&
+            (p.status === "skipped" ||
+              (result?.optimization_skipped ?? Boolean(params?.["skipped"])) ||
+              params?.["status"] === "skipped");
+          const canSkip =
+            isOpt && busy && (p.status === "pending" || p.status === "running") && !optSkipped;
           return (
             <article key={p.name} data-phase={p.name} className={`phase-item phase-${p.status}`}>
               <header className="phase-head">
@@ -140,6 +160,43 @@ export default function PhaseParameters({ result, phase }: Props) {
                   {elapsed ? `${Number(elapsed).toFixed(1)}s` : "—"}
                 </span>
               </header>
+
+              {isOpt && (
+                <p className="muted phase-note">
+                  Pose optimization is extremely expensive on Render and can take many minutes.
+                </p>
+              )}
+
+              {/* Requirement 3 + 10: skipped copy */}
+              {isOpt && optSkipped && (
+                <div className="phase-skip-notice">
+                  <p className="phase-skip-title">Pose optimization skipped</p>
+                  <p className="muted">Using trajectory from previous phase</p>
+                </div>
+              )}
+
+              {/* Requirement 1: button only for Phase 11, single-click */}
+              {canSkip && (
+                <button
+                  className="btn btn-skip-opt"
+                  type="button"
+                  disabled={skipping}
+                  onClick={handleSkip}
+                  title="Skip pose optimization and use trajectory from previous phases"
+                >
+                  {skipping ? "Skipping…" : "Skip Optimization"}
+                </button>
+              )}
+
+              {/* Final result indicator Requirement 10 */}
+              {isOpt && result && (
+                <p className="muted phase-opt-status">
+                  Pose Optimization:{" "}
+                  <strong className={optSkipped ? "opt-skipped" : "opt-completed"}>
+                    {optSkipped ? "Skipped" : "Completed"}
+                  </strong>
+                </p>
+              )}
 
               {entries.length > 0 && (
                 <dl className="param-grid">

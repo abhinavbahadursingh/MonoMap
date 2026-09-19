@@ -57,6 +57,9 @@ from video_pipeline.stages import probe_video  # noqa: E402
 
 from pipeline import run_slam  # noqa: E402  (orchestration layer, same folder)
 from pipeline import SLAM_PHASES  # noqa: E402  (phase names for --skip choices)
+from video_pipeline.skip_control import reset as _reset_skip  # noqa: E402
+from video_pipeline.skip_control import request_skip as _request_skip_optimization  # noqa: E402
+from video_pipeline.skip_control import should_skip as _should_skip_optimization  # noqa: E402
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -196,6 +199,12 @@ class SlamResult(BaseModel):
         default="",
         description="Backend-annotated ORB tracking video for this run "
                     "(empty when unavailable)")
+    optimization_skipped: bool = Field(
+        default=False,
+        description="True when pose optimization was skipped via Skip Optimization")
+    optimization_status: str = Field(
+        default="completed",
+        description="Pose Optimization: completed | skipped")
 
 
 # ------------------------------------------------------------------ #
@@ -274,6 +283,11 @@ def _reset_phases() -> None:
             _PHASES[i] = {"name": name, "label": PHASE_LABELS.get(name, name),
                           "index": i + 1, "total": len(SLAM_PHASES),
                           "status": "pending", "log": "", "elapsed_sec": 0.0}
+    # Reset per-job skip flag (optimization skip is per-request)
+    try:
+        _reset_skip()
+    except Exception:
+        pass
 
 
 def _mark_phase_running(name: str, index_1_based: int, total: int) -> None:
@@ -293,12 +307,24 @@ def _on_phase_log(name: str, log: str, elapsed: float, ok: bool) -> None:
     if len(log) > MAX_PHASE_LOG_CHARS:
         log = ("... [truncated to last "
                f"{MAX_PHASE_LOG_CHARS} chars] ...\n" + log[-MAX_PHASE_LOG_CHARS:])
+    # Detect cooperative skip: optimization stage prints the skip sentinel
+    # and still reports ok=True (it preserves trajectory, just skips BA).
+    is_skipped = False
+    if name == "optimization":
+        low = log.lower()
+        if "pose optimization skipped" in low or "skipped by user request" in low:
+            is_skipped = True
+        elif _should_skip_optimization():
+            is_skipped = True
     with _PHASE_LOCK:
         for entry in _PHASES:
             if entry["name"] == name:
                 entry["log"] = log
                 entry["elapsed_sec"] = round(elapsed, 3)
-                entry["status"] = "done" if ok else "failed"
+                if is_skipped:
+                    entry["status"] = "skipped"
+                else:
+                    entry["status"] = "done" if ok else "failed"
                 break
 
 
@@ -424,6 +450,29 @@ def slam_phases() -> Dict[str, Any]:
     with _PHASE_LOCK:
         return {"active": _PHASES_ACTIVE,
                 "phases": [dict(entry) for entry in _PHASES]}
+
+
+@app.post("/api/slam/skip-optimization")
+def skip_optimization() -> Dict[str, Any]:
+    """Request cooperative skip of Phase 11 — Pose Optimization.
+
+    The pipeline checks this flag at phase entry and at each
+    least_squares residual evaluation (next safe checkpoint). It preserves
+    the last valid trajectory from previous phases and continues to
+    finalization — never kills the entire SLAM job.
+    """
+    _request_skip_optimization()
+    # Opportunistically mark the phase UI so polling reflects immediately
+    with _PHASE_LOCK:
+        for entry in _PHASES:
+            if entry["name"] == "optimization" and entry["status"] in ("pending", "running"):
+                if _should_skip_optimization():
+                    if entry["status"] == "pending":
+                        entry["status"] = "running"
+                    sentinel = "Pose optimization skipped\nUsing trajectory from previous phase"
+                    entry["log"] = (entry["log"] + "\n" + sentinel) if entry["log"] else sentinel
+                break
+    return {"ok": True, "skipped": True, "message": "Pose optimization skip requested"}
 
 
 # ------------------------------------------------------------------ #
@@ -722,7 +771,9 @@ def _build_phase_params(shared: Dict[str, Any], ctx: VideoContext,
                          "rms_after": opt.get("rms_after", 0.0),
                          "scipy_success": scipy_info.get("success", None),
                          "scipy_nfev": scipy_info.get("nfev", 0),
-                         "scipy_status": scipy_info.get("status", "")},
+                         "scipy_status": scipy_info.get("status", ""),
+                         "skipped": bool(opt.get("skipped", False)),
+                         "status": "skipped" if opt.get("skipped") else "completed"},
         "timing": {k: round(float(v), 3) for k, v in (phase_times or {}).items()},
     }
 
@@ -785,6 +836,8 @@ def _slam_response(result: Dict[str, Any], elapsed: float,
     phase_times = {k: round(float(v), 3)
                    for k, v in (result.get("phase_times") or {}).items()}
     phase_params = _build_phase_params(shared, ctx, result.get("phase_times") or {})
+    opt_shared = shared.get("optimization", {}) or {}
+    opt_skipped = bool(opt_shared.get("skipped", False))
     # Every value below is a plain Python type: JSON-safe by construction.
     return SlamResult(
         processing_time_sec=round(elapsed, 3),
@@ -812,6 +865,8 @@ def _slam_response(result: Dict[str, Any], elapsed: float,
         match_stats=match_stats,
         phase_params=phase_params,
         phase_times=phase_times,
+        optimization_skipped=opt_skipped,
+        optimization_status="skipped" if opt_skipped else "completed",
     )
 
 

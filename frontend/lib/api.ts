@@ -42,6 +42,8 @@ export interface SlamResult {
   phase_times: Record<string, number>;
   /** Backend-annotated ORB tracking video path ("" when unavailable). */
   tracking_video_url: string;
+  optimization_skipped: boolean;
+  optimization_status: string;
 }
 
 export type Phase = "idle" | "uploading" | "processing" | "done" | "error";
@@ -59,7 +61,7 @@ export interface PhaseInfo {
   label: string;
   index: number;
   total: number;
-  status: "pending" | "running" | "done" | "failed";
+  status: "pending" | "running" | "done" | "failed" | "skipped";
   log: string;
   elapsed_sec: number;
 }
@@ -157,6 +159,18 @@ export async function fetchPhases(): Promise<PhaseInfo[] | null> {
     return (body?.phases ?? null) as PhaseInfo[] | null;
   } catch {
     return null;
+  }
+}
+
+export async function skipOptimization(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/slam/skip-optimization`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 
